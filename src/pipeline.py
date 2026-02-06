@@ -46,12 +46,12 @@ class RAGPipeline:
         return chunks
 
     def create_embeddings(self, chunks):
-        """Generates embeddings for the provided chunks using NVIDIA API (Direct Request)."""
+        """Generates embeddings for the provided chunks using NVIDIA API (OpenAI Compatible Endpoint)."""
         if not chunks:
             return None
         
-        # Exact Invoke URL for nv-embedqa-e5-v5
-        invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/nv-embedqa-e5-v5"
+        # Using the standard Integrate endpoint which works with Build keys
+        invoke_url = "https://integrate.api.nvidia.com/v1/embeddings"
         
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -62,7 +62,8 @@ class RAGPipeline:
         payload = {
             "input": chunks,
             "input_type": "passage",
-            "model": "passage"
+            "model": self.EMBED_MODEL, # nv-embedqa-e5-v5
+            "encoding_format": "float"
         }
         
         try:
@@ -76,7 +77,7 @@ class RAGPipeline:
         except Exception as e:
             print(f"Embedding API failed. URL: {invoke_url}")
             if 'response' in locals():
-                 print(f"Response: {response.text}")
+                 print(f"Response Body: {response.text}")
             raise e
 
     def build_index(self, chunks):
@@ -98,7 +99,7 @@ class RAGPipeline:
             return []
             
         # Need to embed the query too
-        invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/nv-embedqa-e5-v5"
+        invoke_url = "https://integrate.api.nvidia.com/v1/embeddings"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -107,32 +108,37 @@ class RAGPipeline:
         payload = {
             "input": [query],
             "input_type": "query",
-            "model": "query"
+            "model": self.EMBED_MODEL,
         }
         
-        response = requests.post(invoke_url, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-        query_embedding = response.json()['data'][0]['embedding']
-        
-        query_vector = np.array([query_embedding]).astype('float32')
-        
-        distances, indices = self.index.search(query_vector, k)
-        
-        results = []
-        for i, idx in enumerate(indices[0]):
-            if idx < len(self.chunks):
-                results.append({
-                    "content": self.chunks[idx],
-                    "raw_score": float(distances[0][i])
-                })
-        return results
+        try:
+            response = requests.post(invoke_url, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            query_embedding = response.json()['data'][0]['embedding']
+            
+            query_vector = np.array([query_embedding]).astype('float32')
+            
+            distances, indices = self.index.search(query_vector, k)
+            
+            results = []
+            for i, idx in enumerate(indices[0]):
+                if idx < len(self.chunks):
+                    results.append({
+                        "content": self.chunks[idx],
+                        "raw_score": float(distances[0][i])
+                    })
+            return results
+        except Exception as e:
+            print(f"Retrieval embedding failed: {e}")
+            return []
 
     def rerank(self, query, retrieved_docs):
         """Reranks retrieved documents using NVIDIA Rerank API."""
         if not retrieved_docs:
             return []
 
-        invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/nv-rerankqa-mistral-4b-v3"
+        # Try the specific AI endpoint with /reranking suffix
+        invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/nv-rerankqa-mistral-4b-v3/reranking"
         
         payload = {
             "model": self.RERANK_MODEL,
@@ -145,7 +151,7 @@ class RAGPipeline:
         }
         
         try:
-            response = requests.post(invoke_url, json=payload, headers=headers)
+            response = requests.post(invoke_url, json=payload, headers=headers, timeout=10)
             response.raise_for_status()
             rankings = response.json().get('rankings', [])
             
@@ -161,8 +167,11 @@ class RAGPipeline:
             reranked.sort(key=lambda x: x['score'], reverse=True)
             return reranked
         except Exception as e:
-            print(f"Reranking failed: {e}")
-            return retrieved_docs # Fallback to original order
+            # GRACEFUL DEGRADATION: If rerank fails, just return original docs
+            print(f"Reranking warning (continuing without rerank): {e}")
+            if 'response' in locals():
+                print(f"Rerank response: {response.text}")
+            return retrieved_docs
 
     def generate_response(self, query, context_chunks):
         """Generates a response using the LLM with retrieved context."""
