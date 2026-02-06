@@ -49,22 +49,41 @@ class RAGPipeline:
         return chunks
 
     def create_embeddings(self, chunks):
-        """Generates embeddings for the provided chunks using NVIDIA API."""
+        """Generates embeddings for the provided chunks using NVIDIA API (Direct Request)."""
         if not chunks:
             return None
+        
+        # Exact Invoke URL for Llama Nemotron Embedding
+        invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/llama-nemotron-embed-vl-1b-v2"
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
+        # NVIDIA API expects "input" as a list of strings, and "input_type"
+        payload = {
+            "input": chunks,
+            "input_type": "passage",
+            "model": "passage" # Some endpoints need this, specific to the model
+        }
+        
+        try:
+            response = requests.post(invoke_url, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
             
-        # The NVIDIA API expects a specific format. 
-        # For simplicity in this demo, we loop or batch if needed.
-        # Assuming the API handles a list of inputs.
-        
-        response = self.client.embeddings.create(
-            input=chunks,
-            model=self.EMBED_MODEL,
-            encoding_format="float"
-        )
-        
-        embeddings = [item.embedding for item in response.data]
-        return np.array(embeddings).astype('float32')
+            body = response.json()
+            # Standard NVIDIA response has 'data' -> list of objects with 'embedding'
+            embeddings = [item['embedding'] for item in body['data']]
+            return np.array(embeddings).astype('float32')
+            
+        except Exception as e:
+            # Fallback/Debug info
+            print(f"Embedding API failed. URL: {invoke_url}")
+            if 'response' in locals():
+                 print(f"Response: {response.text}")
+            raise e
 
     def build_index(self, chunks):
         """Builds a FAISS index from text chunks."""
@@ -84,7 +103,23 @@ class RAGPipeline:
         if self.index is None:
             return []
             
-        query_embedding = self.create_embeddings([query])[0]
+        # Need to embed the query too
+        invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/llama-nemotron-embed-vl-1b-v2"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        payload = {
+            "input": [query],
+            "input_type": "query",
+            "model": "query"
+        }
+        
+        response = requests.post(invoke_url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        query_embedding = response.json()['data'][0]['embedding']
+        
         query_vector = np.array([query_embedding]).astype('float32')
         
         distances, indices = self.index.search(query_vector, k)
@@ -102,16 +137,9 @@ class RAGPipeline:
         """Reranks retrieved documents using NVIDIA Rerank API."""
         if not retrieved_docs:
             return []
-            
-        # Prepare payload for reranking
-        # Note: The OpenAI client doesn't standardize reranking yet, 
-        # so we might need a direct request or check if the client supports it via custom extension.
-        # NVIDIA usually exposes this via a specific endpoint structure.
-        # We'll use requests for the specific rerank endpoint if OpenAI client doesn't map easily,
-        # OR use the 'score' method if available in the SDKs people typically use.
-        # For now, let's try a direct requests call to be safe as standard OpenAI lib doesn't have 'rerank'.
+
+        invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/llama-nemotron-rerank-vl-1b-v2"
         
-        url = "https://integrate.api.nvidia.com/v1/rerank"
         payload = {
             "model": self.RERANK_MODEL,
             "query": {"text": query},
@@ -123,7 +151,7 @@ class RAGPipeline:
         }
         
         try:
-            response = requests.post(url, json=payload, headers=headers)
+            response = requests.post(invoke_url, json=payload, headers=headers)
             response.raise_for_status()
             rankings = response.json().get('rankings', [])
             
@@ -135,6 +163,8 @@ class RAGPipeline:
                 doc['score'] = rank['logit']
                 reranked.append(doc)
             
+            # Sort by score descending
+            reranked.sort(key=lambda x: x['score'], reverse=True)
             return reranked
         except Exception as e:
             print(f"Reranking failed: {e}")
