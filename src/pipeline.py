@@ -16,9 +16,9 @@ class RAGPipeline:
         self.index = None
         self.chunks = []
         
-        # Model IDs
-        self.EMBED_MODEL = "nvidia/llama-nemotron-embed-vl-1b-v2"
-        self.RERANK_MODEL = "nvidia/llama-nemotron-rerank-vl-1b-v2"
+        # Model IDs (Switched to Stable Hosted Versions)
+        self.EMBED_MODEL = "nvidia/nv-embedqa-e5-v5"
+        self.RERANK_MODEL = "nvidia/nv-rerankqa-mistral-4b-v3"
         self.CHAT_MODEL = "nvidia/llama-3.3-nemotron-super-49b"
 
     def extract_text(self, pdf_file):
@@ -40,10 +40,7 @@ class RAGPipeline:
                     full_text.append(f"\n[TABLE FOUND]\n{markdown_table}\n")
         
         # Simple chunking for demo purposes
-        # In a real pipeline, we'd use a smarter splitter
         joined_text = "\n\n".join(full_text)
-        
-        # Create chunks of approx 1000 characters
         chunk_size = 1000
         chunks = [joined_text[i:i+chunk_size] for i in range(0, len(joined_text), chunk_size)]
         return chunks
@@ -53,8 +50,8 @@ class RAGPipeline:
         if not chunks:
             return None
         
-        # Exact Invoke URL for Llama Nemotron Embedding
-        invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/llama-nemotron-embed-vl-1b-v2"
+        # Exact Invoke URL for nv-embedqa-e5-v5
+        invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/nv-embedqa-e5-v5"
         
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -62,11 +59,10 @@ class RAGPipeline:
             "Accept": "application/json"
         }
         
-        # NVIDIA API expects "input" as a list of strings, and "input_type"
         payload = {
             "input": chunks,
             "input_type": "passage",
-            "model": "passage" # Some endpoints need this, specific to the model
+            "model": "passage"
         }
         
         try:
@@ -74,12 +70,10 @@ class RAGPipeline:
             response.raise_for_status()
             
             body = response.json()
-            # Standard NVIDIA response has 'data' -> list of objects with 'embedding'
             embeddings = [item['embedding'] for item in body['data']]
             return np.array(embeddings).astype('float32')
             
         except Exception as e:
-            # Fallback/Debug info
             print(f"Embedding API failed. URL: {invoke_url}")
             if 'response' in locals():
                  print(f"Response: {response.text}")
@@ -104,7 +98,7 @@ class RAGPipeline:
             return []
             
         # Need to embed the query too
-        invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/llama-nemotron-embed-vl-1b-v2"
+        invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/nv-embedqa-e5-v5"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -138,7 +132,7 @@ class RAGPipeline:
         if not retrieved_docs:
             return []
 
-        invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/llama-nemotron-rerank-vl-1b-v2"
+        invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/nv-rerankqa-mistral-4b-v3"
         
         payload = {
             "model": self.RERANK_MODEL,

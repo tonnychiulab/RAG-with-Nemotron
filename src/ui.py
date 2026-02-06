@@ -25,8 +25,8 @@ def render_sidebar():
         ### 📚 About
         This app demonstrates a **RAG (Retrieval-Augmented Generation)** pipeline using:
         - **Extraction**: `pdfplumber` (Simulating nv-ingest)
-        - **Embedding**: `nvidia/llama-nemotron-embed-vl-1b-v2`
-        - **Reranking**: `nvidia/llama-nemotron-rerank-vl-1b-v2`
+        - **Embedding**: `nvidia/nv-embedqa-e5-v5`
+        - **Reranking**: `nvidia/nv-rerankqa-mistral-4b-v3`
         - **Chat**: `nvidia/llama-3.3-nemotron-super-49b`
         """)
         
